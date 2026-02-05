@@ -1,14 +1,18 @@
 import React, { useState } from 'react'
-import { Plus, Trash2, Image, Video, FileText, X, Check, Upload } from 'lucide-react'
+import { Plus, Trash2, Image, Video, FileText, X, Check, Upload, Sparkles } from 'lucide-react'
 import { uploadMedia, deleteMedia } from '../services/api'
+import api from "../api/axiosInstance";
 
 /**
  * QuestionBuilder - Component for building MCQ, Viva, and Interview questions
- * Supports: mcq (with 2-4 options), short_answer, long_answer
+ * Supports: mcq (with 2-4 options), viva, interview
+ * Also supports AI-generated questions for viva/interview with topic, difficulty, and count
  */
 export default function QuestionBuilder({ questions, onChange }) {
   const [editingIndex, setEditingIndex] = useState(null)
   const [uploadingMedia, setUploadingMedia] = useState(null) // Track which media type is uploading
+  const [useAIGeneration, setUseAIGeneration] = useState(false) // Toggle for AI generation mode
+  const [generatingQuestions, setGeneratingQuestions] = useState(false) // Loading state for AI generation
   const [newQuestion, setNewQuestion] = useState({
     type: 'mcq', // Default to MCQ for the merged component
     text: '', // Changed from 'question' to match backend
@@ -21,6 +25,14 @@ export default function QuestionBuilder({ questions, onChange }) {
       video: null,
       graph: null
     }
+  })
+
+  // State for AI-generated questions (viva/interview only)
+  const [aiGenerationConfig, setAiGenerationConfig] = useState({
+    topic: '',
+    difficulty: 'medium', // easy, medium, hard
+    numberOfQuestions: 5,
+    baseMarks: 1
   })
 
   // Handler for media uploads to Cloudinary
@@ -69,6 +81,74 @@ export default function QuestionBuilder({ questions, onChange }) {
     expectedAnswer: '',
     media: { image: null, video: null, graph: null }
   })
+
+  // Helper function to reset AI generation config
+  const resetAiGenerationConfig = () => ({
+    topic: '',
+    difficulty: 'medium',
+    numberOfQuestions: 5,
+    baseMarks: 1
+  })
+
+  const handleAddAIGeneratedQuestions = async () => {
+    if (!aiGenerationConfig.topic.trim()) {
+      alert('Please enter a topic')
+      return
+    }
+
+    if (aiGenerationConfig.numberOfQuestions < 1 || aiGenerationConfig.numberOfQuestions > 20) {
+      alert('Number of questions must be between 1 and 20')
+      return
+    }
+
+    setGeneratingQuestions(true)
+    try {
+      // Call the backend API to generate questions
+      const requestPayload = {
+        topics: [aiGenerationConfig.topic],
+        num_questions: aiGenerationConfig.numberOfQuestions,
+        difficulty: aiGenerationConfig.difficulty
+      }
+
+      const { data } = await api.post('/exams/questions_generate/generate', requestPayload)
+
+      // Parse the response and flatten the nested structure
+      const aiQuestions = []
+      const topicsObj = data.topics || {}
+      
+      Object.entries(topicsObj).forEach(([topic, questionsObj]) => {
+        Object.entries(questionsObj).forEach(([qKey, qText], index) => {
+          aiQuestions.push({
+            id: `Q${Date.now()}-${topic}-${index}`,
+            type: newQuestion.type, // viva or interview
+            text: qText,
+            marks: aiGenerationConfig.baseMarks,
+            expectedAnswer: '',
+            media: { image: null, video: null, graph: null }
+          })
+        })
+      })
+
+      if (aiQuestions.length === 0) {
+        alert('No questions were generated. Please try again.')
+        return
+      }
+
+      const updatedQuestions = [...questions, ...aiQuestions]
+      onChange(updatedQuestions)
+
+      // Reset form
+      setUseAIGeneration(false)
+      setAiGenerationConfig(resetAiGenerationConfig())
+      setNewQuestion(resetNewQuestionState())
+      setEditingIndex(null)
+    } catch (error) {
+      console.error('Error generating questions:', error)
+      alert(`Failed to generate questions: ${error.message}`)
+    } finally {
+      setGeneratingQuestions(false)
+    }
+  }
 
   // Function to update state on type change, clearing irrelevant fields
   const handleTypeChange = (newType) => {
@@ -343,7 +423,129 @@ export default function QuestionBuilder({ questions, onChange }) {
           </p>
         </div>
 
-        {/* Question Text */}
+        {/* AI Generation Toggle - Only for Viva/Interview */}
+        {!editingIndex && (newQuestion.type === 'viva' || newQuestion.type === 'interview') && (
+          <div className="mb-4 p-4 border border-purple-200 rounded-lg bg-purple-50">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setUseAIGeneration(!useAIGeneration)
+                  setNewQuestion(resetNewQuestionState())
+                }}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold transition-colors ${
+                  useAIGeneration
+                    ? 'bg-purple-600 text-white'
+                    : 'bg-white border border-purple-300 text-purple-700 hover:bg-purple-50'
+                }`}
+              >
+                <Sparkles className="w-4 h-4" />
+                {useAIGeneration ? 'AI Generation Active' : 'Use AI Generation'}
+              </button>
+              <p className="text-xs text-gray-600">
+                {useAIGeneration
+                  ? 'Configure AI parameters to generate questions automatically'
+                  : 'Switch to manual mode to create questions one by one'}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* AI Generation Configuration - Only shown when AI Generation is active */}
+        {!editingIndex && useAIGeneration && (newQuestion.type === 'viva' || newQuestion.type === 'interview') && (
+          <div className="mb-4 space-y-4 p-4 border border-purple-300 rounded-lg bg-purple-50">
+            <h5 className="font-semibold text-purple-900 flex items-center gap-2">
+              <Sparkles className="w-4 h-4" />
+              AI Question Generation Settings
+            </h5>
+
+            {/* Topic */}
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Topic <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={aiGenerationConfig.topic}
+                onChange={(e) => setAiGenerationConfig({ ...aiGenerationConfig, topic: e.target.value })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                placeholder="e.g., Data Structures, Photosynthesis, Machine Learning"
+              />
+              <p className="text-xs text-gray-600 mt-1">Specify the subject or topic for generated questions</p>
+            </div>
+
+            {/* Difficulty */}
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Difficulty Level
+              </label>
+              <select
+                value={aiGenerationConfig.difficulty}
+                onChange={(e) => setAiGenerationConfig({ ...aiGenerationConfig, difficulty: e.target.value })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+              >
+                <option value="easy">Easy</option>
+                <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
+              </select>
+              <p className="text-xs text-gray-600 mt-1">Set the difficulty level for generated questions</p>
+            </div>
+
+            {/* Number of Questions */}
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Number of Questions
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="20"
+                value={aiGenerationConfig.numberOfQuestions}
+                onChange={(e) => setAiGenerationConfig({ ...aiGenerationConfig, numberOfQuestions: parseInt(e.target.value) || 1 })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+              />
+              <p className="text-xs text-gray-600 mt-1">Generate between 1-20 questions (1-20)</p>
+            </div>
+
+            {/* Base Marks */}
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Marks per Question
+              </label>
+              <input
+                type="number"
+                min="1"
+                value={aiGenerationConfig.baseMarks}
+                onChange={(e) => setAiGenerationConfig({ ...aiGenerationConfig, baseMarks: parseInt(e.target.value) || 1 })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+              />
+              <p className="text-xs text-gray-600 mt-1">Set marks for each generated question</p>
+            </div>
+
+            {/* Generate Button */}
+            <button
+              type="button"
+              onClick={handleAddAIGeneratedQuestions}
+              disabled={generatingQuestions}
+              className="w-full px-4 py-3 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-lg hover:from-purple-700 hover:to-purple-800 disabled:from-purple-400 disabled:to-purple-400 disabled:cursor-not-allowed transition-colors font-semibold flex items-center justify-center gap-2"
+            >
+              {generatingQuestions ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  Generate {aiGenerationConfig.numberOfQuestions} Question{aiGenerationConfig.numberOfQuestions !== 1 ? 's' : ''}
+                </>
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* Question Text - Only shown for manual mode or when editing */}
+        {(!useAIGeneration || editingIndex !== null) && (
         <div className="mb-4">
           <label className="block text-sm font-semibold text-gray-700 mb-2">
             Question <span className="text-red-500">*</span>
@@ -356,9 +558,10 @@ export default function QuestionBuilder({ questions, onChange }) {
             placeholder="Enter your question here..."
           />
         </div>
+        )}
 
         {/* --- MCQ Options Input --- */}
-        {newQuestion.type === 'mcq' && (
+        {(!useAIGeneration || editingIndex !== null) && newQuestion.type === 'mcq' && (
           <div className="mb-4 space-y-3">
             <label className="block text-sm font-semibold text-gray-700 mb-2">
               Options <span className="text-red-500">*</span>
@@ -413,6 +616,7 @@ export default function QuestionBuilder({ questions, onChange }) {
 
 
         {/* Points */}
+        {(!useAIGeneration || editingIndex !== null) && (
         <div className="mb-4">
           <label className="block text-sm font-semibold text-gray-700 mb-2">
             Marks
@@ -425,8 +629,10 @@ export default function QuestionBuilder({ questions, onChange }) {
             className="w-32 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           />
         </div>
+        )}
 
         {/* Media Upload */}
+        {(!useAIGeneration || editingIndex !== null) && (
         <div className="mb-4">
           <label className="block text-sm font-semibold text-gray-700 mb-2">
             Media Attachments <span className="text-gray-500 text-xs">(Optional)</span>
@@ -514,8 +720,10 @@ export default function QuestionBuilder({ questions, onChange }) {
             </div>
           </div>
         </div>
+        )}
 
-        {/* Actions */}
+        {/* Actions - shown for manual mode and edit mode */}
+        {(!useAIGeneration || editingIndex !== null) && (
         <div className="flex items-center gap-3 pt-4 border-t border-gray-200">
           {editingIndex !== null && (
             <button
@@ -523,6 +731,7 @@ export default function QuestionBuilder({ questions, onChange }) {
               onClick={() => {
                 setEditingIndex(null)
                 setNewQuestion(resetNewQuestionState())
+                setUseAIGeneration(false)
               }}
               className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
             >
@@ -538,6 +747,7 @@ export default function QuestionBuilder({ questions, onChange }) {
             {editingIndex !== null ? 'Update Question' : 'Add Question'}
           </button>
         </div>
+        )}
       </div>
     </div>
   )

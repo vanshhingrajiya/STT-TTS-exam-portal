@@ -470,7 +470,7 @@ const TakeExamView = () => {
       console.log(`📝 Submitting exam with ${answers.length} text/MCQ answers and ${audioAnswers.length} audio answers`);
       if (audioAnswers.length === 0) {
         console.warn(`⚠️ No audio answers collected. Check question types and recordings.`);
-        console.log(`Debug info:`, answerStatuses);
+        // console.log(`Debug info:`, answerStatuses);
       }
 
       // Submit exam (text/MCQ answers only)
